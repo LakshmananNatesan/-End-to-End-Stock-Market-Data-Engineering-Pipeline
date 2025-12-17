@@ -1,0 +1,5 @@
+docker pull amazon/aws-glue-libs:glue_libs_4.0.0_image_01
+
+docker run -it -v ${HOME}/.aws:/home/glue_user/.aws -e AWS_PROFILE=default -p 4040:4040 --name glue_spark amazon/aws-glue-libs:glue_libs_4.0.0_image_01 pyspark
+
+# then read the spark code from yahoo_txn.py in the container shell and view the output 
