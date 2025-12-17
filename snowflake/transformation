@@ -1,0 +1,145 @@
+ CREATE OR REPLACE STORAGE INTEGRATION yahoo_s3_integration
+TYPE = EXTERNAL_STAGE
+STORAGE_PROVIDER = S3
+ENABLED = TRUE
+STORAGE_AWS_ROLE_ARN = ''
+STORAGE_ALLOWED_LOCATIONS = ('s3://stockmarket.pipeline/cleaned/');
+;
+
+CREATE OR REPLACE STAGE yahoo_stage
+URL = 's3://stockmarket.pipeline/cleaned/stock=MFC/'
+STORAGE_INTEGRATION = yahoo_s3_integration
+FILE_FORMAT = (TYPE = PARQUET);
+
+CREATE OR REPLACE PIPE yahoo_stock_pipe
+AUTO_INGEST = TRUE
+AS
+COPY INTO yahoo_stock
+FROM @yahoo_stage
+FILE_FORMAT = (TYPE = PARQUET)
+MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE;
+
+
+CREATE OR REPLACE TABLE yahoo_stock (
+    symbol STRING,
+    exchangename STRING,
+    currency STRING,
+    timestamp NUMBER,
+    open FLOAT,
+    high FLOAT,
+    low FLOAT,
+    close FLOAT,
+    volume NUMBER,
+    date DATE
+);
+
+ 
+
+DELETE FROM yahoo_stock
+WHERE (symbol, date, timestamp) IN (
+    SELECT symbol, date, timestamp
+    FROM (
+        SELECT 
+            symbol, 
+            date, 
+            timestamp,
+            ROW_NUMBER() OVER (
+                PARTITION BY symbol, date, timestamp
+                ORDER BY timestamp
+            ) AS rn
+        FROM yahoo_stock
+    )
+    WHERE rn > 1
+);
+ 
+
+create table   yahoo_api_ml as 
+select *
+from ml_yahoo
+where symbol = 'MFC'
+
+-- which day more stocks traded ( more no of volumes)
+select *
+from(
+select date,rank() over  (order by volume desc) as rn 
+from yahoo_api_ml)a
+where rn<=10
+ 
+-- which day there was long difference between opening and closing 
+
+select date,high-low as diff
+from yahoo_api_ml
+order by diff desc
+limit 10 
+
+-- which day it was the max and min price 
+select min(low),max(high)
+from yahoo_api_ml;
+
+select date,high
+from yahoo_api_ml
+order by high desc
+limit 1;
+
+select date,low
+from yahoo_api_ml
+order by low asc
+limit 1
+SELECT date, volume, 'MAX_VOLUME' AS type
+FROM yahoo_api_ml
+ORDER BY volume DESC
+LIMIT 1
+
+UNION ALL
+
+SELECT date, volume, 'MIN_VOLUME' AS type
+FROM yahoo_api_ml
+ORDER BY volume ASC
+LIMIT 1;
+with cte as(
+select *,
+rank() over (order by volume asc) as ase
+,rank() over (order by volume desc) as des
+from yahoo_api_ml)
+select date,volume,'mini_stocks_traded'
+from cte 
+where ase=1 
+union all 
+select date,volume,'max_stocks_traded'
+from cte 
+where des = 1
+
+
+-- what was the avergage closing price in the weekends 
+SELECT 
+    DATE_TRUNC('WEEK', date) AS week_start,
+    AVG(close) AS average_closing_price
+FROM yahoo_api_ml
+GROUP BY week_start
+ORDER BY week_start;
+ 
+-- which day is the best price to buy stocks
+
+select   month(date) as mn , dayname(date) as wd,avg(close) aa 
+from yahoo_api_ml
+where year(date) = '2025' --and month(date) = '6'
+group by month(date),dayname(date)
+order by  aa
+ 
+select date,high,close,low
+from yahoo_api_ml 
+where date in (
+select date 
+from ml_yahoo
+order by volume desc
+limit 5 )
+ 
+-- which month more shares was purchased
+select month(date) as mn,year(date),avg(volume) as avg
+from yahoo_api_ml
+group by month(date) ,year(date)
+-- which month has purchased more shares 
+
+select *
+from yahoo_api_ml
+ 
