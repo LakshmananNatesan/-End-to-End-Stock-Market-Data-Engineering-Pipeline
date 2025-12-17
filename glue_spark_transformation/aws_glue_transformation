@@ -1,0 +1,53 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, arrays_zip, explode, from_unixtime, to_date
+
+spark = SparkSession.builder.appName("Yahoo-Glue-ETL").getOrCreate()
+
+TICKER = "MFC"
+
+input_path = f"s3://stockmarket.pipeline/parquet/full_json/stock={TICKER}/"
+output_path = f"s3://stockmarket.pipeline/cleaned/stock={TICKER}/"
+
+
+df = spark.read.parquet(input_path)
+
+raw = df.select(
+    "full_record.meta.symbol",
+    "full_record.meta.exchangeName",
+    "full_record.meta.currency",
+    "full_record.timestamp",
+    "full_record.indicators.quote"
+)
+
+q = raw.select(
+    col("symbol"),
+    col("exchangeName"),
+    col("currency"),
+    col("timestamp"),
+    raw.quote[0].open.alias("open"),
+    raw.quote[0].high.alias("high"),
+    raw.quote[0].low.alias("low"),
+    raw.quote[0].close.alias("close"),
+    raw.quote[0].volume.alias("volume")
+)
+
+df_zip = q.select(
+    "symbol", "exchangeName", "currency",
+    arrays_zip("timestamp", "open", "high", "low", "close", "volume").alias("zipped")
+)
+
+df_exp = df_zip.withColumn("row", explode("zipped"))
+
+df_flat = df_exp.select(
+    "symbol", "exchangeName", "currency",
+    col("row.timestamp").alias("timestamp"),
+    col("row.open").alias("open"),
+    col("row.high").alias("high"),
+    col("row.low").alias("low"),
+    col("row.close").alias("close"),
+    col("row.volume").alias("volume")
+)
+
+final_df = df_flat.withColumn("date", to_date(from_unixtime("timestamp")))
+
+final_df.write.mode("overwrite").parquet(output_path)
